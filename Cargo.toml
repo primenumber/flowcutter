@@ -1,0 +1,9 @@
+[package]
+name = "flowcutter"
+version = "0.1.0"
+authors = ["prime <prime@kmc.gr.jp>"]
+edition = "2018"
+
+[dependencies]
+failure = "0.1.5"
+verugent = "0.1.2"
