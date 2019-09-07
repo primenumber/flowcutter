@@ -6,4 +6,4 @@ edition = "2018"
 
 [dependencies]
 failure = "0.1.5"
-verugent = "0.1.2"
+# verugent = "0.1.2"

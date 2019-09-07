@@ -443,8 +443,8 @@ fn cut(circuit: &Vec<(Variable, Element)>, constrains: &Vec<(usize, usize)>) -> 
     result
 }
 
+mod verugent;
 #[macro_use]
-extern crate verugent;
 use verugent::vcore::*;
 
 fn calc_regs(circuit: &Vec<(Variable, Element, usize)>)
@@ -479,12 +479,55 @@ fn calc_regs(circuit: &Vec<(Variable, Element, usize)>)
     reg_count
 }
 
+fn gen_lut6(m : &mut VModule, table: u64) -> Func_AST {
+    let mut f = func(&format!("func_{}", table), 1);
+    let mut inputs = Vec::new();
+    for index in 0..6 {
+        inputs.push(f.Input(&format!("in_{}", index), 1));
+    }
+    let mut prev = Vec::new();
+    for index in 0..64 {
+        let val = (table >> index) & 1;
+        prev.push(_Num(val as i32));
+    }
+    let mut size = 32;
+    for stage in 0..5 {
+        let mut nexts = Vec::new();
+        for index in 0..size {
+            let res_0 = &prev[2*index];
+            let res_1 = &prev[2*index+1];
+            let input = &inputs[stage];
+            nexts.push(_Branch(F!(input == 1), res_1, res_0));
+        }
+        prev = nexts;
+        size /= 2;
+    }
+    let res_0 = &prev[0];
+    let res_1 = &prev[1];
+    let input = &inputs[5];
+    f.If(F!(input == 1), Form(f.clone().own().sst(res_1)));
+    f.Else(Form(f.clone().own().sst(res_0)));
+    m.Function(f.clone());
+    f
+}
+
 fn gen_verilog(circuit: &Vec<(Variable, Element, usize)>) -> String {
     let reg_count = calc_regs(circuit);
     let mut m = VModule::new("Circuit");
     let clk = m.Input("clk", 1);
     let rst = m.Input("rst", 1);
 
+    let mut funcs = HashMap::<u64, Func_AST>::new();
+    for (_, elem, _) in circuit {
+        match elem {
+            Element::LUT6(table, _) => {
+                if !funcs.contains_key(table) {
+                    funcs.insert(*table, gen_lut6(&mut m, *table));
+                }
+            },
+            _ => ()
+        }
+    }
     let mut vals = HashMap::<(usize, usize), Box<E>>::new();
     for (var, elem, lat) in circuit {
         let width = var.width as i32;
@@ -505,28 +548,16 @@ fn gen_verilog(circuit: &Vec<(Variable, Element, usize)>) -> String {
                 vals.insert((var.id, 0), val);
             },
             Element::LUT6(table, parents) => {
-                let mut prev_vals = Vec::new();
-                for index in 0..64 {
-                    let num = (table >> index) & 1u64;
-                    prev_vals.push(_Num(num as i32));
+                let mut val6 = Vec::new();
+                for parent in parents {
+                    let lat_p = lat - circuit[*parent].2;
+                    val6.push(vals.get(&(*parent, lat_p)).unwrap());
                 }
-                let mut size = 32;
-                for stage in 0..6 {
-                    let mut next_vals = Vec::new();
-                    let lat_s = lat - circuit[parents[stage]].2;
-                    let val_s = vals.get(&(parents[stage], lat_s)).unwrap();
-                    for index in 0..size {
-                        let val = m.Wire(&format!("val_{}_lut_{}_{}", var.id, stage, index), 1);
-                        let res_0 = &prev_vals[2*index];
-                        let res_1 = &prev_vals[2*index+1];
-                        m.Assign(val._e(_Branch(F!(val_s == 1), res_1, res_0)));
-                        next_vals.push(val);
-                    }
-                    size /= 2;
-                    prev_vals = next_vals;
-                }
-                let val = m.Wire(&format!("val_{}", var.id), 1);
-                m.Assign(val._e(&prev_vals[0]));
+                let f = funcs.get(table).unwrap();
+                let val = m.Wire(&format!("val_{}", var.id), width);
+                m.Assign(val._e(f.clone().using(
+                            func_args!(val6[0], val6[1], val6[2],
+                                       val6[3], val6[4], val6[5]))));
                 vals.insert((var.id, 0), val);
             },
             Element::Mul48(a, b) => {
