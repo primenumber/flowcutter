@@ -513,7 +513,7 @@ fn gen_lut6(m : &mut VModule, table: u64) -> Func_AST {
 
 fn gen_verilog(circuit: &Vec<(Variable, Element, usize)>) -> String {
     let reg_count = calc_regs(circuit);
-    let mut m = VModule::new("Circuit");
+    let mut m = VModule::new("circuit");
     let clk = m.Input("clk", 1);
     let rst = m.Input("rst", 1);
 
@@ -648,7 +648,7 @@ fn main() {
     let constraints = Vec::new();
     let phases = cut(&vec_elem, &constraints);
     let code = gen_verilog(&phases);
-    let mut file = File::create("circuit.v").unwrap();
+    let mut file = File::create("build/circuit.v").unwrap();
     write!(file, "{}", code).unwrap();
     file.flush().unwrap();
 }
