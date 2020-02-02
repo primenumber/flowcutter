@@ -516,6 +516,7 @@ fn gen_verilog(circuit: &Vec<(Variable, Element, usize)>) -> String {
     let mut m = VModule::new("circuit");
     let clk = m.Input("clk", 1);
     let rst = m.Input("rst", 1);
+    let out = m.Output("out", circuit.last().unwrap().0.width as i32);
 
     let mut funcs = HashMap::<u64, Func_AST>::new();
     for (_, elem, _) in circuit {
@@ -533,8 +534,12 @@ fn gen_verilog(circuit: &Vec<(Variable, Element, usize)>) -> String {
         let width = var.width as i32;
         match elem {
             Element::Input => {
-                vals.insert((var.id, 0),
-                    m.Input(&format!("val_{}", var.id), width));
+                let in_val = m.Input(&format!("input_{}", var.id), width);
+                let val = m.Reg(&format!("val_{}", var.id), width);
+                m.Always(Posedge(&clk).Posedge(&rst).non()
+                         .If(&rst, Form(F!(val = 0)))
+                         .Else(Form(F!(val = in_val))));
+                vals.insert((var.id, 0), val);
             },
             Element::FAdd(a, b, c) => {
                 let lat_a = lat - circuit[*a].2;
@@ -605,8 +610,11 @@ fn gen_verilog(circuit: &Vec<(Variable, Element, usize)>) -> String {
     }
 
     let last = vals.get(&(circuit.len()-1, 0)).unwrap();
-    let out = m.Output("out", circuit.last().unwrap().0.width as i32);
-    m.Assign(out._e(last));
+    let out_reg = m.Reg("out_reg", circuit.last().unwrap().0.width as i32);
+    m.Always(Posedge(&clk).Posedge(&rst).non()
+             .If(&rst, Form(F!(out_reg = 0)))
+             .Else(Form(F!(out_reg = last))));
+    m.Assign(out._e(out_reg));
     m.endmodule()
 }
 
