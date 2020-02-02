@@ -443,8 +443,8 @@ fn cut(circuit: &Vec<(Variable, Element)>, constrains: &Vec<(usize, usize)>) -> 
     result
 }
 
-mod verugent;
 #[macro_use]
+extern crate verugent;
 use verugent::vcore::*;
 
 fn calc_regs(circuit: &Vec<(Variable, Element, usize)>)
