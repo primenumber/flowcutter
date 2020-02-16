@@ -1,7 +1,30 @@
+#[derive(Debug, PartialEq)]
+enum Target {
+    Xilinx
+}
+
+#[derive(Debug, Fail)]
+enum TargetParseError {
+    #[fail(display = "Unknown target")]
+    UnknownTarget,
+}
+
+use std::str::FromStr;
+
+impl FromStr for Target {
+    type Err = failure::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "xilinx" => Ok(Target::Xilinx),
+            _ => Err(failure::Error::from(TargetParseError::UnknownTarget))
+        }
+    }
+}
+
 struct Config {
     pub filename: String,
-    pub target: String,
-    pub frequency: usize,
+    pub target: Target,
+    pub frequency: f64,
 }
 
 #[derive(Debug)]
