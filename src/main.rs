@@ -653,9 +653,100 @@ impl Config {
             return Err(failure::Error::from(ParseConfigError::NotEnoughArgumentError));
         }
         let filename = &args[1];
-        let target = &args[2];
-        let frequency: usize = args[3].parse()?;
-        Ok(Config { filename: filename.to_string(), target: target.to_string(), frequency })
+        let target = Target::from_str(&args[2])?;
+        let frequency: f64 = args[3].parse()?;
+        Ok(Config { filename: filename.to_string(), target, frequency })
+    }
+}
+
+#[derive(Debug, Fail)]
+enum ParseTimingReportError {
+    #[fail(display = "Failed to parse")]
+    FailedToParseError,
+}
+
+use regex::Regex;
+
+fn parse_timing_report() -> Result<Vec<(String, String)>, failure::Error> {
+    let re_source = Regex::new(r"^\s{2}Source:\s+val_(\d+)_reg\[(\d+)\]/\w$")?;
+    let re_destination = Regex::new(r"^\s{2}Destination:\s+out_reg_reg\[(\d+)\]/\w$")?;
+    let mut res = Vec::<(String, String)>::new();
+    let mut mode = 0;
+    for result in BufReader::new(File::open("build/timing.rpt")?).lines() {
+        let line = result?;
+        if line.starts_with("Slack (") {
+            //if lines.starts_with("Slack (MET)") {
+            //    return res;
+            //}
+            if mode == 0 {
+                mode = 1;
+            } else {
+                return Err(failure::Error::from(ParseTimingReportError::FailedToParseError));
+            }
+        } else if line.starts_with("  Source: ") {
+            if mode == 1 {
+                mode = 2;
+                let cap = re_source.captures(&line).unwrap();
+                println!("[source] index: {}, bit: {}", &cap[1], &cap[2]);
+            } else {
+                return Err(failure::Error::from(ParseTimingReportError::FailedToParseError));
+            }
+        } else if line.starts_with("  Destination: ") {
+            if mode == 2 {
+                mode = 0;
+                let cap = re_destination.captures(&line).unwrap();
+                println!("[destination] bit: {}", &cap[1]);
+            } else {
+                return Err(failure::Error::from(ParseTimingReportError::FailedToParseError));
+            }
+        }
+    }
+    Ok(res)
+}
+
+use std::process::{Command};
+
+fn update_constrains(constrains: &Vec<(usize, usize)>, config: &Config) -> Vec<(usize, usize)> {
+    if config.target == Target::Xilinx {
+        {
+            let mut xdc_file = File::create("build/circuit_timing.xdc").unwrap();
+            write!(xdc_file, "create_clock -period {} [get_ports clk]", 1000.0 / config.frequency).unwrap();
+            xdc_file.flush().unwrap();
+        }
+        let mut create_project = Command::new("vivado")
+            .arg("-mode")
+            .arg("batch")
+            .arg("-source")
+            .arg("build/create_project.tcl")
+            .spawn().expect("failed to run");
+        create_project.wait();
+        let mut build = Command::new("vivado")
+            .arg("-mode")
+            .arg("batch")
+            .arg("-source")
+            .arg("build/build.tcl")
+            .spawn().expect("failed to run");
+        build.wait();
+        let critical_paths = parse_timing_report();
+        constrains.clone()
+    } else {
+        unimplemented!("Unsupported target: {:?}", config.target);
+    }
+}
+
+fn optimize(circuit_noreg: &Vec<(Variable, Element)>, config: &Config) -> Vec<(Variable, Element, usize)> {
+    let mut constraints = Vec::new();
+    loop {
+        let phases = cut(&circuit_noreg, &constraints);
+        let code = gen_verilog(&phases);
+        let mut file = File::create("build/circuit.v").unwrap();
+        write!(file, "{}", code).unwrap();
+        file.flush().unwrap();
+        let new_constrains = update_constrains(&constraints, &config);
+        if new_constrains == constraints {
+            return phases;
+        }
+        constraints = new_constrains;
     }
 }
 
@@ -676,10 +767,5 @@ fn main() {
         println!("Transform Error: {:?}", err);
         process::exit(1);
     });
-    let constraints = Vec::new();
-    let phases = cut(&vec_elem, &constraints);
-    let code = gen_verilog(&phases);
-    let mut file = File::create("build/circuit.v").unwrap();
-    write!(file, "{}", code).unwrap();
-    file.flush().unwrap();
+    let result = optimize(&vec_elem, &config);
 }
